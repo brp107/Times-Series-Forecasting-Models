@@ -1,0 +1,107 @@
+---
+title: "Forecasting US Candy Production"
+author: "brp107@scarletmail.rutgers.edu"
+date: "10/3/2026"
+output: html_document
+---
+
+```{r}
+library(fpp2)
+library(TTR)
+
+candy_production <- read.csv("candy_production.csv")
+candy_ts <- ts(candy_production$IPG3113N, start = c(1972, 1), frequency = 12)
+
+attributes(candy_ts)
+plot(candy_ts)
+Acf(candy_ts)
+```
+
+**Explanation:** `attributes()` confirms that `candy_ts` is a time series running from 1972 to 2017 with a frequency of 12, monthly data. The plot shows a long-run upward trend through about 2005, a drop around 2007 to 2009, and a clear repeating yearly pattern with production peaking every fall. The ACF confirms the seasonality, the autocorrelation spikes at lag 12 (about 0.90) and lag 24 (about 0.84), so each month is strongly related to the same month in previous years. Models that account for seasonality should perform best.
+
+##Models
+
+```{r}
+mean_forecast <- meanf(candy_ts,5)
+plot(mean_forecast)
+```
+
+**Explanation:** The mean method forecasts every future month as the average of all past observations, 100.66. The forecast is a flat line that ignores both the trend and the seasonal pattern, so it only serves as a baseline. The shaded 80% and 95% prediction intervals are very wide (roughly 77 to 124 at 80%) because the data varies a lot around its overall average.
+
+
+```{r}
+naive_forecast <- naive(candy_ts,5)
+plot(naive_forecast)
+```
+
+**Explanation:** The naiven method uses the last observed value, 114.06 (August 2017), as the forecast for every future month. It reflects the recent level better than the mean, but it misses the fall holiday peak. Its prediction intervals widen with each month ahead, because uncertainty builds the further out it forecasts.
+
+
+```{r}
+rwf_forecast <- rwf(candy_ts,5)
+rwf_forecast <- rwf(candy_ts,5, drift=TRUE)
+plot(rwf_forecast)
+```
+
+**Explanation:** Without drift, the random walk forecast is identical to the naive forecast. It adds the average monthly change across the whole history, about 0.05 index points per month, so the forecast rises very slightly. That drift is tiny compared with the seasonal swings, this forecast is almost the same as the naive one and still has no seasonality.
+
+
+```{r}
+snaive_forecast <- snaive(candy_ts,5)
+plot(snaive_forecast)
+```
+
+**Explanation:** The seasonal naive method forecasts each month with the value from the same month one year earlier. For example, the October 2017 forecast (119.05) is October 2016's actual value. This is the first model here that captures the seasonal pattern: it forecasts a rise into October and a drop in January.
+
+
+```{r}
+MA5_forecast <- ma(candy_ts, order = 5)
+MA9_forecast <- ma(candy_ts, order = 10)
+MA15_forecast <- ma(candy_ts, order = 15)
+```
+
+**Explanation:** `ma()` creates a centered moving average, which smooths the series by averaging each month with the months around it. MA(5) averages 5 months MA(10) averages 10 months, and MA(15) averages 15 months so it is smoother. It is centered, thats why it uses future values and cannot extend past the last few observations. That makes it a smoothing tool for seeing the underlying level rather than a true forecast.
+
+
+```{r}
+plot(mean_forecast)
+lines(naive_forecast$mean,col="red")
+lines(rwf_forecast$mean,col="green")
+lines(snaive_forecast$mean,col="blue")
+lines(MA5_forecast,col="Pink")
+lines(MA9_forecast,col="Blue")
+attributes(naive_forecast)
+```
+
+**Explanation:** The chart shows the full 45-year history, so the 5-month forecasts appear as a small strip at the far right edge. There, the mean forecast is the flat line at about 100.7 with the shaded prediction intervals. The naive and drift forecasts sit around 114 and overlap almost completely because they differ by less than 0.3. The seasonal naive forecast blends into the end of the actual data because it is a copy of the last 12 months. The moving averages run through the whole history. MA(5) stays close to the actual data, while MA(9) is noticeably smoother, and MA(15) is the smoothest. It shows the long-run trend most clearly, because MA(15) removes most of the seasonality. The lines also show the long-run trend: growth until the mid-2000s, a drop around 2008 to 2009, and a partial recovery.
+
+`attributes(naive_forecast)` lists what is stored in a forecast object, including `mean` (the point forecasts used in the chart), `lower` and `upper` (the prediction intervals), `fitted` (the model's fitted values), and `residuals` (actual minus fitted).
+
+## Holt-Winters
+
+```{r}
+HW_forecast <- HoltWinters(candy_ts)
+plot(HW_forecast)
+SSE_Simple <- HoltWinters(candy_ts,beta=FALSE,gamma=FALSE)
+attributes(SSE_Simple)
+plot(SSE_Simple)
+SSE_Simple$SSE
+head(SSE_Simple$fitted)
+```
+
+**Explanation:** The full Holt-Winters model estimates level, trend, and seasonality. R chose alpha = 0.602 (level), beta = 0.003 (trend), and gamma = 0.586 (seasonality), with an SSE of 8,151.7. (R gives a warning that the optimizer had difficulty, but it still returns usable parameters.) In its plot, the red fitted line follows the black actual data closely, including the seasonal peaks.
+
+`SSE_Simple` turns off the trend (`beta=FALSE`) and seasonality (`gamma=FALSE`), leaving simple exponential smoothing. Its alpha is about 1, meaning it puts nearly all the weight on the most recent month, so it behaves like the naive method and its fitted line lags one month behind the actual data. Its SSE is 44,519.3, more than five times larger than the full Holt-Winters model, which shows how much is lost by ignoring seasonality. `head(SSE_Simple$fitted)` shows the first fitted values, and `xhat` equals `level` because there is no trend or seasonal component.
+
+## Accuracy Comparison
+
+```{r}
+accuracy(mean_forecast)
+accuracy(naive_forecast)
+accuracy(rwf_forecast)
+accuracy(snaive_forecast)
+accuracy(forecast(HW_forecast))
+accuracy(forecast(SSE_Simple))
+```
+
+**Conclusion:** Holt-Winters is the best model. Its MPE of -0.27% is the closest to zero, meaning it forecasts only about a quarter of a percent too high on average. It models the level, trend, and seasonal pattern, which suits candy production's strong holiday cycle. The mean model is the worst, forecasting about 3.6% too high on average. One limitation of MPE is that positive and negative errors cancel out, so it measures bias, not the size of the errors. That is why the naive model looks better than seasonal naive here even though its RMSE is larger (9.02 vs. 6.78). Holt-Winters also has the lowest RMSE (3.90), so it is the best mode.
